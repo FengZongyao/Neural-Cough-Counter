@@ -1,0 +1,75 @@
+{
+    "HUBERTC_Params": {
+      "ANNOTATIONS_FILE": "../strong_detect/classi.csv",
+      "AUDIO_DIR": "../DatasetVAD/",
+      "CHECKPOINT_DIR": "checkpoints/HUBERTC/",
+      "LOG_DIR": "logs/HUBERTC_logs/",
+      "LR": 1e-5,
+      "BATCH_SIZE": 50,
+      "EPOCHS": 50,
+      "CHECK_VAL": 1,
+      "LOG_EVERY_N_STEPS": 1,
+      "LOSS_WEIGHT": [1, 1],
+      "AUDIO_DURATION":5
+    },
+
+
+
+
+    "HUBERTF_Params": {
+        "BATCH_SIZE":50,
+        "NUM_FRAMES": 249,
+        "ANNOTATIONS_FILE":"../strong_detect/5spos_CVTEST.csv",
+        "EPOCHS":50,
+        "LR": 1e-5,
+        "CHECKPOINT_DIR": "checkpoints/HUBERTF/",
+        "LOG_DIR": "logs/HUBERTF_logs/",
+        "CHECK_VAL": 1,
+        "LOG_EVERY_N_STEPS": 1,
+        "AUDIO_DURATION":5
+      },
+
+
+
+
+
+    "KD_Params": {
+      "TEMPERATURE": 5,
+      "MU": 0.6,
+      "TEACHER_CHECKPOINT": "checkpoints/HUBERTF/HUBERTF.ckpt",
+      "BATCH_SIZE":25,
+      "NUM_FRAMES": 249,
+      "ANNOTATIONS_FILE":"../strong_detect/5spos_CVTEST.csv",
+      "EPOCHS":5,
+      "LR": 6e-5,
+      "CHECKPOINT_DIR": "checkpoints/KD/",
+      "LOG_DIR": "logs/KD_logs/",
+      "CHECK_VAL": 1,
+      "LOG_EVERY_N_STEPS": 1,
+      "AUDIO_DURATION":5
+    },
+
+
+
+
+    "HUBERTRF_Params": {
+      "LOSS_NAME": "MSE",
+      "FILTER_WINDOW": 8,
+      "FILTER_ORDER":1,
+      "GRAD_WIN": 6,
+      "NOISE_THRESH": 0.185,
+      "TRAINING_LAYER" :"reg_dense",
+      "FRAME_CHECKPOINT": "checkpoints/KD/KD.ckpt",
+      "BATCH_SIZE":120,
+      "NUM_FRAMES": 249,
+      "ANNOTATIONS_FILE":"../strong_detect/5spos_CVTEST.csv",
+      "EPOCHS":10,
+      "LR": 7e-3,
+      "CHECKPOINT_DIR": "checkpoints/HUBERTRF/",
+      "LOG_DIR": "logs/HUBERTRF_logs/",
+      "CHECK_VAL": 1,
+      "LOG_EVERY_N_STEPS": 1,
+      "AUDIO_DURATION":5
+    }
+  }
+  
