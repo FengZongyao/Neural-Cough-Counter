@@ -27,21 +27,24 @@ def cough_monitoring(target_path):
         print('Classifying on Audio Segments..')
         predictions = trainer.predict(HUBERTC_interface,audioseg,ckpt_path=HUBERTC_checkpoint )
         audioseg.update_dataframe(predictions)
+    if sum(predictions) == 0:
+        print('no cough segments found')
+        return None
+    else:
+        HUBERTRF_interface = Detection_Interface()
+        trainer = Trainer()
+        coughseg = CoughSeg5s()
+        HUBERTRF_checkpoint = 'checkpoints/Detection.ckpt'
+        HUBERTRF_checkpoint = torch.load(HUBERTRF_checkpoint)
+        HUBERTRF_interface.load_state_dict(HUBERTRF_checkpoint["state_dict"])
+        HUBERTRF_interface.eval()
+        with torch.no_grad():
+            print('Detecting Coughs on Cough Segments..')
+            predictions = trainer.predict(HUBERTRF_interface,coughseg)
+            coughseg.update_dataframe(predictions)
+            result_path = coughseg.generate_result_txt(coughseg.labels)
 
-    HUBERTRF_interface = Detection_Interface()
-    trainer = Trainer()
-    coughseg = CoughSeg5s()
-    HUBERTRF_checkpoint = 'checkpoints/Detection.ckpt'
-    HUBERTRF_checkpoint = torch.load(HUBERTRF_checkpoint)
-    HUBERTRF_interface.load_state_dict(HUBERTRF_checkpoint["state_dict"])
-    HUBERTRF_interface.eval()
-    with torch.no_grad():
-        print('Detecting Coughs on Cough Segments..')
-        predictions = trainer.predict(HUBERTRF_interface,coughseg)
-        coughseg.update_dataframe(predictions)
-        result_path = coughseg.generate_result_txt(coughseg.labels)
-
-    return result_path
+        return result_path
 
 def plot_cough_frequency(result_path, audio_path):
 
@@ -103,5 +106,9 @@ if __name__ == "__main__":
     parser.add_argument('target_path', type=str, help='Path to the directory containing audio files')
     args = parser.parse_args()
     result_path = cough_monitoring(args.target_path)
-    plot_cough_frequency(result_path, args.target_path)
-    print('cough monitoring complete, see results in cough_monitor_results directory.')
+    if result_path:
+        plot_cough_frequency(result_path, args.target_path)
+        print('cough monitoring complete, see results in cough_monitor_results directory.')
+    else:
+        print('cough monitoring complete, no coughs found.')
+    

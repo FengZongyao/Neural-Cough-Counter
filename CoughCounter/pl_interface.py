@@ -104,14 +104,14 @@ class Classification_Interface(pl.LightningModule):
 
         
     def configure_metrics(self):
-        self.test_acc = Accuracy(task='multiclass',num_classes=2,average='micro',mdmc_average = 'samplewise')
-        self.val_acc = Accuracy(task='multiclass',num_classes=2,average='macro',mdmc_average = 'samplewise')
-        self.train_acc = Accuracy(task='multiclass',num_classes=2,average='macro',mdmc_average = 'samplewise')
-        self.recall = Recall(task='multiclass',num_classes=2,average='macro',mdmc_average = 'samplewise')
-        self.test_recall = Recall(task='multiclass',num_classes=2,average='macro',mdmc_average = 'samplewise')
-        self.f1_valid = F1Score(task='multiclass',num_classes=2,average='macro',mdmc_average = 'samplewise')
-        self.auroc = AUROC(task='multiclass',num_classes=2,average='macro',mdmc_average = 'samplewise')
-        self.f1 = F1Score(task='multiclass',num_classes=2,average='macro',mdmc_average = 'samplewise')
+        self.test_acc = Accuracy(task='multiclass',num_classes=2,average='micro',multidim_average = 'samplewise')
+        self.val_acc = Accuracy(task='multiclass',num_classes=2,average='macro',multidim_average = 'samplewise')
+        self.train_acc = Accuracy(task='multiclass',num_classes=2,average='macro',multidim_average = 'samplewise')
+        self.recall = Recall(task='multiclass',num_classes=2,average='macro',multidim_average = 'samplewise')
+        self.test_recall = Recall(task='multiclass',num_classes=2,average='macro',multidim_average = 'samplewise')
+        self.f1_valid = F1Score(task='multiclass',num_classes=2,average='macro',multidim_average = 'samplewise')
+        self.auroc = AUROC(task='multiclass',num_classes=2,average='macro')
+        self.f1 = F1Score(task='multiclass',num_classes=2,average='macro',multidim_average = 'samplewise')
 
 ########################################################################################################################################
 import scipy.signal as sci
@@ -123,8 +123,8 @@ import copy
 class Detection_Interface(pl.LightningModule):     # REG AND FRAME
     
     def __init__(self,loss_name='MSE',lr=1e-3,
-                 mu = 1,filter_window = 8,
-                 filter_order = 1,grad_win = 6,pred_thresh = 0.5,noise_thresh = 0.185):
+                 mu = 1,filter_window = 9,
+                 filter_order = 2,grad_win = 5,pred_thresh = 0.5):
         super().__init__()
         self.save_hyperparameters()
         self.load_model()
@@ -271,71 +271,92 @@ class Detection_Interface(pl.LightningModule):     # REG AND FRAME
         metrics['test_loss_frame'] = loss
         self.outputs = outputs
         self.metrics = metrics
-        
-        
+
     def predict_step(self,batch,batch_idx):
         pred_f,pred_c = self(batch)
         pred_f = F.softmax(pred_f,1)
         pred_f = (pred_f[:,1,:]>=self.hparams.pred_thresh).int()
         if pred_f.any():
-            pred_centers = self.combine_preds(pred_f,pred_c)
+            pred_centers, pred_bounds = self.combine_preds(pred_f,pred_c)
         else:
             pred_centers = []
         return pred_centers
 
     def event_eval(self,preds_f,preds_c):
         P = R = F1 = 0
+        pred_centers = []
         if preds_f.any():
             y_boundry = copy.deepcopy(self.eval_boundary)
-            pred_centers = self.combine_preds(preds_f,preds_c)
-            self.pred_centers = pred_centers
-        tp,fp,fn = self.matching(pred_centers,y_boundry)
-        if tp==0:
-            tp = 1
-        P = tp/(tp+fp)
-        R = tp/(tp+fn)
-        F1 = 2*P*R/(P+R)
+            pred_centers, pred_bounds = self.combine_preds(preds_f,preds_c)
+            if len(pred_centers) == 0:
+                self.pred_centers = 0
+            else:
+                self.pred_centers = pred_centers
+        else:
+            self.pred_centers = 0
+        
+        if len(pred_centers):
+            tp,fp,fn = self.matching(pred_centers,y_boundry)
+            if tp==0:
+                tp = 1
+            P = tp/(tp+fp)
+            R = tp/(tp+fn)
+            F1 = 2*P*R/(P+R)
         return P,R,F1
     
     def find_peaks(self,c_sample):
         y = sci.savgol_filter(c_sample, self.hparams.filter_window, self.hparams.filter_order)
-        y[y<self.hparams.noise_thresh] = 0
         peaks = sci.find_peaks_cwt(y, self.hparams.grad_win)
-        return peaks-2
+        return peaks
+
     
-    def sample_centers(self,pos_bounds,peaks,i):
-        centers = peaks.tolist()
+    def sample_centers(self, pos_bounds, peaks, i):
+        centers = []
+        new_bounds = []
         if len(pos_bounds):
             for boundary in pos_bounds:
                 if (boundary[1] - boundary[0]) < 5:
                     continue
-                boundary_contains_center = False
-                for center in peaks:
-                    if boundary[0] <= center <= boundary[1]:
-                        boundary_contains_center = True
-                        break
-                if boundary_contains_center:
-                    continue
-                mid = (boundary[0] + boundary[1]) / 2
-                centers.append(mid)
+                else:
+                    for idx, end in enumerate(peaks):
+                        if boundary[0]+2 < end <= boundary[1]+2:
+                            centers.append(int((boundary[0] + end) / 2))
+                            new_bounds.append([boundary[0], end])
+                            boundary[0] = end
+                        if end > boundary[1]+2:
+                            break
         centers.sort()
-        return (np.array(centers)*0.02+(i*4.98)).tolist()
+        return (np.array(centers) * 0.02 + (i * 4.98)).tolist(),(np.array(new_bounds) * 0.02 + (i * 4.98)).tolist()
     
 
 
     def combine_preds(self,preds_f,preds_c):
         pred_centers = []
-        for i,f_sample in enumerate(preds_f):
-            c_sample = preds_c[i]
+        pred_bounds = []
+        if len(preds_f)==1:
+            c_sample = preds_c.squeeze()
             peaks = self.find_peaks(c_sample.cpu().numpy())
-            pos_frames = torch.argwhere(f_sample).flatten()
+            pos_frames = torch.argwhere(preds_f.squeeze()).flatten()
             if not len(pos_frames):
                 pos_bounds = []
             else:
                 pos_bounds = list(self.group(pos_frames.tolist()))
-            pred_centers += self.sample_centers(pos_bounds,peaks,i)
-
-        return pred_centers
+                c,b = self.sample_centers(pos_bounds,peaks,0)
+            pred_centers += c
+            pred_bounds += b
+        else:
+            for i,f_sample in enumerate(preds_f):
+                c_sample = preds_c[i]
+                peaks = self.find_peaks(c_sample.cpu().numpy())
+                pos_frames = torch.argwhere(f_sample).flatten()
+                if not len(pos_frames):
+                    pos_bounds = []
+                else:
+                    pos_bounds = list(self.group(pos_frames.tolist()))
+                    c,b = self.sample_centers(pos_bounds,peaks,i)
+                pred_centers += c
+                pred_bounds += b
+        return pred_centers,pred_bounds
     
     def group(self,label):
         s = e = label[0]
@@ -370,17 +391,17 @@ class Detection_Interface(pl.LightningModule):     # REG AND FRAME
         avg = 'macro'
         m_a = 'global'
         n_c = 2
-        self.test_acc = Accuracy(task='multiclass',num_classes=n_c,mdmc_average = m_a)
-        self.val_acc = Accuracy(task='multiclass',num_classes=n_c,mdmc_average = m_a)
-        self.train_acc = Accuracy(task='multiclass',num_classes=n_c,mdmc_average = m_a)
-        self.test_precision = Precision(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.val_precision = Precision(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.train_precision = Precision(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.recall = Recall(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.test_recall = Recall(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.f1_valid = F1Score(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.auroc = AUROC(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.f1 = F1Score(task = 'multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
+        self.test_acc = Accuracy(task='multiclass',num_classes=n_c,multidim_average = m_a)
+        self.val_acc = Accuracy(task='multiclass',num_classes=n_c,multidim_average = m_a)
+        self.train_acc = Accuracy(task='multiclass',num_classes=n_c,multidim_average = m_a)
+        self.test_precision = Precision(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.val_precision = Precision(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.train_precision = Precision(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.recall = Recall(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.test_recall = Recall(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.f1_valid = F1Score(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.auroc = AUROC(task='multiclass',num_classes=n_c,average=avg)
+        self.f1 = F1Score(task = 'multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
         self.val_mae = MeanAbsoluteError()
         self.test_mae = MeanAbsoluteError()
 
@@ -480,17 +501,17 @@ class HUBERTF_Interface(pl.LightningModule):
         m_a = 'global'
         n_c = 2
         avg = 'macro'
-        self.test_acc = Accuracy(task='multiclass',num_classes=n_c,mdmc_average = m_a)
-        self.val_acc = Accuracy(task='multiclass',num_classes=n_c,mdmc_average = m_a)
-        self.train_acc = Accuracy(task='multiclass',num_classes=n_c,mdmc_average = m_a)
-        self.test_precision = Precision(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.val_precision = Precision(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.train_precision = Precision(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.recall = Recall(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.test_recall = Recall(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.f1_valid = F1Score(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.auroc = AUROC(task='multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
-        self.f1 = F1Score(task = 'multiclass',num_classes=n_c,average=avg,mdmc_average = m_a)
+        self.test_acc = Accuracy(task='multiclass',num_classes=n_c,multidim_average = m_a)
+        self.val_acc = Accuracy(task='multiclass',num_classes=n_c,multidim_average = m_a)
+        self.train_acc = Accuracy(task='multiclass',num_classes=n_c,multidim_average = m_a)
+        self.test_precision = Precision(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.val_precision = Precision(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.train_precision = Precision(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.recall = Recall(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.test_recall = Recall(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.f1_valid = F1Score(task='multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
+        self.auroc = AUROC(task='multiclass',num_classes=n_c,average=avg)
+        self.f1 = F1Score(task = 'multiclass',num_classes=n_c,average=avg,multidim_average = m_a)
 
 ########################################################################################################################################
 

@@ -58,7 +58,11 @@ class VAD:
         audio_filename = os.path.splitext(os.path.basename(audio_path))[0]
         silence = self.detect_silence(audio_path)
         silence = self.dump_silence(silence)
-        signal_obj = self.remove_silence(signal, silence, sr)
+        if len(silence)==0:
+            print(f'no silence detected.')
+            signal_obj = [(signal,0)]
+        else:
+            signal_obj = self.remove_silence(signal, silence, sr)
         print(f'saving audio chunks into {self.target_folder} folder ..')
         for idx, (chunk,chunk_start) in tqdm(enumerate(signal_obj)):
             chunk_duration = len(chunk) / sr
@@ -72,5 +76,6 @@ class VAD:
                 chunk = chunk[int(chunk_part_duration * sr):]  # Remove the saved chunk_part
                 chunk_duration -= chunk_part_duration
                 chunk_start += chunk_part_duration
+
 
 
